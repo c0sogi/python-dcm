@@ -29,7 +29,7 @@ A Python package for reading and writing DCM (Data Conservation Format) files us
 
 ## Installation
 
-Ensure you have Python 3.10 or higher installed. Install the package using `pip`:
+Ensure you have Python 3.11 or higher installed. Install the package using `pip`:
 
 ```bash
 pip install git+https://github.com/c0sogi/python-dcm.git
@@ -163,7 +163,7 @@ modifications_dcm = dcm1 % dcm2
 
 ## Dependencies
 
-- Python >= 3.10
+- Python >= 3.11
 - [NumPy](https://numpy.org/) >= 1.20.0
 - [Pandas](https://pandas.pydata.org/) >= 1.5.0
 - [Matplotlib](https://matplotlib.org/) >= 3.0.0
@@ -223,7 +223,7 @@ A Python package for reading and writing DCM (Data Conservation Format) files us
 
 ## Installation
 
-Ensure you have Python 3.10 or higher installed. Install the package using `pip`:
+Ensure you have Python 3.11 or higher installed. Install the package using `pip`:
 
 ```bash
 pip install git+https://github.com/c0sogi/python-dcm.git
@@ -357,7 +357,7 @@ modifications_dcm = dcm1 % dcm2
 
 ## Dependencies
 
-- Python >= 3.10
+- Python >= 3.11
 - [NumPy](https://numpy.org/) >= 1.20.0
 - [Pandas](https://pandas.pydata.org/) >= 1.5.0
 - [Matplotlib](https://matplotlib.org/) >= 3.0.0

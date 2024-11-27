@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "python-dcm"
-version = "0.1.1"
+version = "0.1.2"
 description = "A Python package for reading and writing DCM(Data Conversion Format) for various ECU calibration tools, such as INCA, MDA, EHANDBOOK, CANape, etc."
 authors = ["c0sogi <dcas@naver.com>"]
 license = "MIT"
@@ -8,7 +8,7 @@ readme = "README.md"
 packages = [{ include = "dcm" }]
 
 [tool.poetry.dependencies]
-python = ">=3.10"
+python = ">=3.11"
 numpy = ">=1.20.0,<3"
 pandas = ">=1.5.0,<3"
 matplotlib = ">=3.0.0,<4"
