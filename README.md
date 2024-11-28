@@ -1,5 +1,3 @@
-Let me revise it with a more user-friendly approach in English:
-
 # python-dcm
 
 A high-performance Python package for handling ETAS DCM(Data Conversion Format) files used in engine calibration tools like INCA, MDA, EHANDBOOK, and CANape.
