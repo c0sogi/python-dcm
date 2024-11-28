@@ -15,14 +15,17 @@ from io import (
 from math import isnan, nan
 from re import Match, Pattern, compile
 from typing import (
+    TYPE_CHECKING,
     Callable,
     Final,
-    LiteralString,
+    Iterable,
     Optional,
-    Self,
     TypeAlias,
     TypeVar,
 )
+
+if TYPE_CHECKING:
+    from typing import LiteralString, Self  # python >= 3.11
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -33,9 +36,6 @@ from .linear_interpolation import lininterp1, lininterp2
 
 FloatDtype: TypeAlias = np.float64
 
-COMMENT_QUALIFIERS: Final[tuple[bytes, bytes, bytes]] = (b"!", b"*", b".")
-LINE_SEP_STR: Final[str] = "\n"
-LINE_SEP_BYTES: Final[bytes] = b"\n"
 FileDescriptorOrPath: TypeAlias = (
     int | str | bytes | os.PathLike[str] | os.PathLike[bytes]
 )
@@ -52,16 +52,14 @@ PathOrReadable: TypeAlias = FileDescriptorOrPath | Readable
 
 K = TypeVar("K")
 V = TypeVar("V")
+
 MapFunction: TypeAlias = Callable[
     [npt.ArrayLike, npt.ArrayLike], npt.NDArray[FloatDtype]
 ]
-ScalarMapFunction: TypeAlias = Callable[[float, float], float]
 CurveFunction: TypeAlias = Callable[[npt.ArrayLike], npt.NDArray[FloatDtype]]
-ScalarCurveFunction: TypeAlias = Callable[[float], float]
 
 logger: Final[logging.Logger] = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-DECODE_ERRORS: Final[str] = "replace"
 
 # Patterns: dimensions
 PATTERN_1D: Final[bytes] = rb"\s+(.*?)\s+(\d+)"
@@ -76,6 +74,9 @@ VARIANT_PATTERN: Final[Pattern[bytes]] = compile(rb"VAR\s+(.*?)=(.*)")
 AXIS_X_PATTERN: Final[Pattern[bytes]] = compile(rb"SSTX\s+(.*)")
 AXIS_Y_PATTERN: Final[Pattern[bytes]] = compile(rb"SSTY\s+(.*)")
 
+EMPTY_SERIES: Final[pd.Series] = pd.Series()
+EMPTY_DATAFRAME: Final[pd.DataFrame] = pd.DataFrame()
+EMPTY_ARRAY: Final[np.ndarray] = np.array(())
 
 # Patterns: classes
 PARAMETER_BLOCK_PATTERN: Final[Pattern[bytes]] = compile(
@@ -121,20 +122,18 @@ class BasicInformation:
         s: str
         if self.comment:
             s = (
-                LINE_SEP_STR.join(
-                    (f"*{ln}" for ln in self.comment.splitlines())
-                )
-                + LINE_SEP_STR
+                "\n".join((f"*{ln}" for ln in self.comment.splitlines()))
+                + "\n"
             )
         else:
             s = ""
-        s += f'   LANGNAME "{self.description}"' + LINE_SEP_STR
+        s += f'   LANGNAME "{self.description}"\n'
         if self.function:
-            s += f"   FUNKTION {self.function}" + LINE_SEP_STR
+            s += f"   FUNKTION {self.function}\n"
         if self.display_name:
-            s += f"   DISPLAYNAME {self.display_name}" + LINE_SEP_STR
+            s += f"   DISPLAYNAME {self.display_name}\n"
         for var_name, var_value in self.variants.items():
-            s += f"   VAR {var_name}={var_value}" + LINE_SEP_STR
+            s += f"   VAR {var_name}={var_value}\n"
         return s
 
     def parse(self, line: bytes, comment: bool = True) -> bool:
@@ -150,11 +149,10 @@ class BasicInformation:
             self.description = _parse_text(line)
         elif line.startswith(b"FUNKTION"):
             self.function = _parse_text(line)
-        elif line.startswith(COMMENT_QUALIFIERS):
+        elif line.startswith((b"*", b"!", b".")):
             if comment:
                 self.comment += (
-                    line[1:].strip().decode(errors=DECODE_ERRORS)
-                    + LINE_SEP_STR
+                    line[1:].strip().decode(errors="replace") + "\n"
                 )
             else:
                 return False
@@ -175,12 +173,12 @@ class Parameter(BasicInformation):
     text: str
 
     def __str__(self) -> str:
-        s: str = f"FESTWERT {self.name}{LINE_SEP_STR}{self.unparse()}"
-        s += f'   EINHEIT_W "{self.unit}"{LINE_SEP_STR}'
+        s: str = f"FESTWERT {self.name}\n{self.unparse()}"
+        s += f'   EINHEIT_W "{self.unit}"\n'
         if isnan(self.value):
-            s += f'   TEXT "{self.text}"{LINE_SEP_STR}'
+            s += f'   TEXT "{self.text}"\n'
         else:
-            s += f"   WERT {self.value}{LINE_SEP_STR}"
+            s += f"   WERT {self.value}\n"
         return s + "END"
 
     def __eq__(self, other: object) -> bool:
@@ -192,7 +190,7 @@ class Parameter(BasicInformation):
         )
 
     @classmethod
-    def from_bytestream(cls, stream: BytesReadable, line: bytes) -> Self:
+    def from_bytestream(cls, stream: BytesReadable, line: bytes) -> "Self":
         self = cls(
             name=_parse_name_without_keyword(line),
             description="",
@@ -221,12 +219,17 @@ class Parameter(BasicInformation):
     def value_or_text(self) -> str | float:
         return self.value if not isnan(self.value) else self.text
 
-    def as_number(self, raise_on_nan: bool = True) -> int | float | bool:
+    def as_number(
+        self,
+        raise_on_nan: bool = True,
+        int_pattern: Pattern[str] = PURE_INT_PATTERN,
+        float_pattern: Pattern[str] = PURE_FLOAT_PATTERN,
+    ) -> int | float | bool:
         if isnan(self.value):
             text: str = self.text
-            if PURE_INT_PATTERN.fullmatch(text):
+            if int_pattern.fullmatch(text):
                 return int(text)
-            elif PURE_FLOAT_PATTERN.fullmatch(text):
+            elif float_pattern.fullmatch(text):
                 return float(text)
             elif text == "true":
                 return True
@@ -292,11 +295,11 @@ class ParameterBlock(BasicInformation):
 
         s: str = f"FESTWERTEBLOCK {self.name} {x_dimension}"
         if y_dimension is not None:
-            s += f" @ {y_dimension}{LINE_SEP_STR}"
+            s += f" @ {y_dimension}\n"
         else:
-            s += LINE_SEP_STR
+            s += "\n"
         s += self.unparse()
-        s += f'   EINHEIT_W "{self.unit}"{LINE_SEP_STR}'
+        s += f'   EINHEIT_W "{self.unit}"\n'
 
         stringifier: Callable[[np.dtype], str]
         if np.issubdtype(self.array.dtype, np.number):
@@ -310,14 +313,14 @@ class ParameterBlock(BasicInformation):
             s += (
                 f"   {classifier} "
                 + " ".join((stringifier(x) for x in self.array.flatten()))
-                + LINE_SEP_STR
+                + "\n"
             )
         else:
             for line in self.array:
                 s += (
                     f"   {classifier} "
                     + " ".join((stringifier(x) for x in line))
-                    + LINE_SEP_STR
+                    + "\n"
                 )
         return s + "END"
 
@@ -352,13 +355,13 @@ class ParameterBlock(BasicInformation):
         )
 
     @classmethod
-    def from_bytestream(cls, stream: BytesReadable, line: bytes) -> Self:
+    def from_bytestream(cls, stream: BytesReadable, line: bytes) -> "Self":
         m: Optional[Match[bytes]] = PARAMETER_BLOCK_PATTERN.search(
             line.strip()
         )
         if m is None:
             raise ValueError(f"Invalid block: {line}")
-        name: str = m.group(1).decode(errors=DECODE_ERRORS)
+        name: str = m.group(1).decode(errors="replace")
         x_dimension: int = int(m.group(2))
         y_dimension_str: Optional[bytes] = m.group(3)
         if y_dimension_str is not None:
@@ -374,7 +377,7 @@ class ParameterBlock(BasicInformation):
             unit="",
             variants={},
             comment="",
-            array=np.array(()),
+            array=EMPTY_ARRAY,
         )
         values: list[str | float] = []
         while not (line := stream.readline().strip()).startswith(b"END"):
@@ -385,7 +388,7 @@ class ParameterBlock(BasicInformation):
             elif line.startswith(b"TEXT"):
                 values.extend(
                     (
-                        match.decode(errors=DECODE_ERRORS)
+                        match.decode(errors="replace")
                         for match in TEXT_PATTERN.findall(line)
                     )
                 )
@@ -424,8 +427,8 @@ class Textstring(BasicInformation):
     text: str
 
     def __str__(self) -> str:
-        s: str = f"TEXTSTRING {self.name}{LINE_SEP_STR}{self.unparse()}"
-        s += f'   TEXT "{self.text}"{LINE_SEP_STR}'
+        s: str = f"TEXTSTRING {self.name}\n{self.unparse()}"
+        s += f'   TEXT "{self.text}"\n'
         return s + "END"
 
     def __eq__(self, other: object) -> bool:
@@ -434,7 +437,7 @@ class Textstring(BasicInformation):
         return self.name == other.name and self.text == other.text
 
     @classmethod
-    def from_bytestream(cls, stream: BytesReadable, line: bytes) -> Self:
+    def from_bytestream(cls, stream: BytesReadable, line: bytes) -> "Self":
         self = cls(
             name=_parse_name_without_keyword(line),
             description="",
@@ -466,19 +469,19 @@ class Distribution(BasicInformation):
 
     def __str__(self) -> str:
         s: str = (
-            f"STUETZSTELLENVERTEILUNG {self.name} {len(self.values)}{LINE_SEP_STR}{self.unparse()}"
+            f"STUETZSTELLENVERTEILUNG {self.name} {len(self.values)}\n{self.unparse()}"
         )
-        s += f'   EINHEIT_X "{self.unit_x}"{LINE_SEP_STR}'
+        s += f'   EINHEIT_X "{self.unit_x}"\n'
         if self.values:
-            s += f"   ST/X {' '.join((str(x) for x in self.values))}{LINE_SEP_STR}"
+            s += f"   ST/X {' '.join((str(x) for x in self.values))}\n"
         return s + "END"
 
     @classmethod
-    def from_bytestream(cls, stream: BytesReadable, line: bytes) -> Self:
+    def from_bytestream(cls, stream: BytesReadable, line: bytes) -> "Self":
         m: Match[bytes] | None = DISTRIBUTION_PATTERN.search(line.strip())
         if m is None:
             raise ValueError(f"Invalid distribution: {line}")
-        name: str = m.group(1).decode(errors=DECODE_ERRORS)
+        name: str = m.group(1).decode(errors="replace")
         x_dimension: int = int(m.group(2))
 
         self = cls(
@@ -517,8 +520,8 @@ class Function:
         return f'   FKT {self.name} "{self.description}" "{self.version}"'
 
     @classmethod
-    def from_bytestream(cls, stream: BytesReadable) -> list[Self]:
-        functions: list[Self] = []
+    def from_bytestream(cls, stream: BytesReadable) -> list["Self"]:
+        functions: list["Self"] = []
         while not (line := stream.readline().strip()).startswith(b"END"):
             function_match: Match[bytes] | None = FUNCTION_PATTERN.search(
                 line
@@ -527,16 +530,14 @@ class Function:
                 raise ValueError(f"Invalid function: {line}")
             functions.append(
                 cls(
-                    name=function_match.group(1).decode(
-                        errors=DECODE_ERRORS
-                    ),
+                    name=function_match.group(1).decode(errors="replace"),
                     description=(
-                        function_match.group(2).decode(errors=DECODE_ERRORS)
+                        function_match.group(2).decode(errors="replace")
                         if function_match.group(2)
                         else ""
                     ),
                     version=(
-                        function_match.group(3).decode(errors=DECODE_ERRORS)
+                        function_match.group(3).decode(errors="replace")
                         if function_match.group(3)
                         else ""
                     ),
@@ -553,26 +554,26 @@ class CharacteristicLine(BasicInformation):
     series: "pd.Series[float]"
 
     @property
-    def classifier(self) -> LiteralString:
+    def classifier(self) -> "LiteralString":
         return "KENNLINIE"
 
     def __str__(self) -> str:
         s: str = (
-            f"{self.classifier} {self.name} {len(self.series)}{LINE_SEP_STR}{self.unparse()}"
+            f"{self.classifier} {self.name} {len(self.series)}\n{self.unparse()}"
         )
-        s += f'   EINHEIT_X "{self.unit_x}"{LINE_SEP_STR}'
-        s += f'   EINHEIT_W "{self.unit_values}"{LINE_SEP_STR}'
+        s += f'   EINHEIT_X "{self.unit_x}"\n'
+        s += f'   EINHEIT_W "{self.unit_values}"\n'
         if self.x_mapping:
-            s += f"*SSTX {self.x_mapping}{LINE_SEP_STR}"
+            s += f"*SSTX {self.x_mapping}\n"
 
         index: list[float] = self.index
         if index:
-            s += f"   ST/X {' '.join(str(x) for x in index)}{LINE_SEP_STR}"
+            s += f"   ST/X {' '.join(str(x) for x in index)}\n"
         values = self.series.values
         if values:
-            s += f"   WERT {' '.join(str(x) for x in values)}{LINE_SEP_STR}"
+            s += f"   WERT {' '.join(str(x) for x in values)}\n"
         for name, var in self.variants.items():
-            s += f"   VAR {name}={var}" + LINE_SEP_STR
+            s += f"   VAR {name}={var}" + "\n"
         return s + "END"
 
     def __eq__(self, other: object) -> bool:
@@ -583,7 +584,7 @@ class CharacteristicLine(BasicInformation):
         )
 
     @classmethod
-    def from_dataframe(cls, df: pd.DataFrame, name: str) -> Self:
+    def from_dataframe(cls, df: pd.DataFrame, name: str) -> "Self":
         if df.shape[0] == 1:
             index: list[float] = df.columns.astype(FloatDtype).tolist()
             index_name: str = df.columns.name or df.index.name
@@ -610,12 +611,12 @@ class CharacteristicLine(BasicInformation):
     @classmethod
     def from_bytestream(
         cls, stream: BytesReadable, line: bytes, pattern: Pattern[bytes]
-    ) -> Self:
+    ) -> "Self":
         m: Match[bytes] | None = pattern.search(line)
         if m is None:
             raise ValueError(f"Invalid characteristic map: {line}")
 
-        name: str = m.group(1).decode(errors=DECODE_ERRORS)
+        name: str = m.group(1).decode(errors="replace")
         x_dimension: int = int(m.group(2))
         self = cls(
             name=name,
@@ -626,7 +627,7 @@ class CharacteristicLine(BasicInformation):
             unit_values="",
             variants={},
             comment="",
-            series=pd.Series(),
+            series=EMPTY_SERIES,
         )
 
         index_name: str = ""
@@ -644,16 +645,13 @@ class CharacteristicLine(BasicInformation):
                 self.unit_values = _parse_text(line)
             elif line.startswith(b"EINHEIT_X"):
                 self.unit_x = _parse_text(line)
-            elif line.startswith(COMMENT_QUALIFIERS):
+            elif line.startswith((b"*", b"!", b".")):
                 re_match_x: Match[bytes] | None = AXIS_X_PATTERN.search(line)
                 if re_match_x:
-                    index_name = re_match_x.group(1).decode(
-                        errors=DECODE_ERRORS
-                    )
+                    index_name = re_match_x.group(1).decode(errors="replace")
                 else:
                     self.comment += (
-                        line[1:].strip().decode(errors=DECODE_ERRORS)
-                        + LINE_SEP_STR
+                        line[1:].strip().decode(errors="replace") + "\n"
                     )
             else:
                 logger.warning(f"Unknown parameter field: {line}")
@@ -722,14 +720,14 @@ class CharacteristicLine(BasicInformation):
 @dataclass
 class FixedCharacteristicLine(CharacteristicLine):
     @property
-    def classifier(self) -> LiteralString:
+    def classifier(self) -> "LiteralString":
         return "FESTKENNLINIE"
 
 
 @dataclass
 class GroupCharacteristicLine(CharacteristicLine):
     @property
-    def classifier(self) -> LiteralString:
+    def classifier(self) -> "LiteralString":
         return "GRUPPENKENNLINIE"
 
 
@@ -741,7 +739,7 @@ class CharacteristicMap(BasicInformation):
     unit_values: str
 
     @property
-    def classifier(self) -> LiteralString:
+    def classifier(self) -> "LiteralString":
         return "KENNFELD"
 
     def __eq__(self, other: object) -> bool:
@@ -756,29 +754,29 @@ class CharacteristicMap(BasicInformation):
         y_dimension, x_dimension = self.dataframe.shape
         s: str = (
             f"{self.classifier} {self.name} {x_dimension} {y_dimension}"
-            + LINE_SEP_STR
+            + "\n"
         ) + self.unparse()
-        s += f'   EINHEIT_X "{self.unit_x}"' + LINE_SEP_STR
-        s += f'   EINHEIT_Y "{self.unit_y}"' + LINE_SEP_STR
-        s += f'   EINHEIT_W "{self.unit_values}"' + LINE_SEP_STR
+        s += f'   EINHEIT_X "{self.unit_x}"' + "\n"
+        s += f'   EINHEIT_Y "{self.unit_y}"' + "\n"
+        s += f'   EINHEIT_W "{self.unit_values}"' + "\n"
         if self.x_mapping:
-            s += f"*SSTX {self.x_mapping}" + LINE_SEP_STR
+            s += f"*SSTX {self.x_mapping}" + "\n"
         if self.y_mapping:
-            s += f"*SSTY {self.y_mapping}" + LINE_SEP_STR
+            s += f"*SSTY {self.y_mapping}" + "\n"
         s += (
             "   ST/X "
             + " ".join(str(x) for x in self.dataframe.columns)
-            + LINE_SEP_STR
+            + "\n"
         )
         for y, z in self.dataframe.iterrows():
-            s += f"   ST/Y {y}" + LINE_SEP_STR
-            s += f"   WERT {' '.join(str(x) for x in z)}" + LINE_SEP_STR
+            s += f"   ST/Y {y}" + "\n"
+            s += f"   WERT {' '.join(str(x) for x in z)}" + "\n"
         for var_name, var_value in self.variants.items():
-            s += f"   VAR {var_name}={var_value}" + LINE_SEP_STR
+            s += f"   VAR {var_name}={var_value}" + "\n"
         return s + "END"
 
     @classmethod
-    def from_dataframe(cls, df: pd.DataFrame, name: str) -> Self:
+    def from_dataframe(cls, df: pd.DataFrame, name: str) -> "Self":
         return cls(
             dataframe=df,
             name=name,
@@ -798,11 +796,11 @@ class CharacteristicMap(BasicInformation):
         stream: BytesReadable,
         line: bytes,
         pattern: Pattern[bytes],
-    ) -> Self:
+    ) -> "Self":
         m: Match[bytes] | None = pattern.search(line)
         if m is None:
             raise ValueError(f"Invalid characteristic map: {line}")
-        name: str = m.group(1).decode(errors=DECODE_ERRORS)
+        name: str = m.group(1).decode(errors="replace")
         x_dimension: int = int(m.group(2))
         y_dimension: int = int(m.group(3))
 
@@ -814,7 +812,7 @@ class CharacteristicMap(BasicInformation):
 
         self = cls(
             name=name,
-            dataframe=pd.DataFrame(),
+            dataframe=EMPTY_DATAFRAME,
             description="",
             display_name="",
             function="",
@@ -840,18 +838,17 @@ class CharacteristicMap(BasicInformation):
                 self.unit_x = _parse_text(line)
             elif line.startswith(b"EINHEIT_Y"):
                 self.unit_y = _parse_text(line)
-            elif line.startswith(COMMENT_QUALIFIERS):
+            elif line.startswith((b"*", b"!", b".")):
                 mx: Match[bytes] | None = AXIS_X_PATTERN.search(line)
                 if mx:
-                    column_name = mx.group(1).decode(errors=DECODE_ERRORS)
+                    column_name = mx.group(1).decode(errors="replace")
                 else:
                     my: Match[bytes] | None = AXIS_Y_PATTERN.search(line)
                     if my:
-                        index_name = my.group(1).decode(errors=DECODE_ERRORS)
+                        index_name = my.group(1).decode(errors="replace")
                     else:
                         self.comment += (
-                            line[1:].strip().decode(errors=DECODE_ERRORS)
-                            + LINE_SEP_STR
+                            line[1:].strip().decode(errors="replace") + "\n"
                         )
             else:
                 logger.warning(f"Unknown parameter field: {line}")
@@ -943,14 +940,14 @@ class CharacteristicMap(BasicInformation):
 @dataclass
 class FixedCharacteristicMap(CharacteristicMap):
     @property
-    def classifier(self) -> LiteralString:
+    def classifier(self) -> "LiteralString":
         return "FESTKENNFELD"
 
 
 @dataclass
 class GroupCharacteristicMap(CharacteristicMap):
     @property
-    def classifier(self) -> LiteralString:
+    def classifier(self) -> "LiteralString":
         return "GRUPPENKENNFELD"
 
 
@@ -970,15 +967,15 @@ class DCM:
     distributions: dict[str, Distribution] = field(default_factory=dict)
 
     @classmethod
-    def from_file(cls, path_or_file: PathOrReadable) -> Self:
+    def from_file(cls, path_or_file: PathOrReadable) -> "Self":
         return cls().read(path_or_file)
 
     def __str__(self) -> str:
         # Print the file header
 
-        ls: str = LINE_SEP_STR
-        ls2: str = LINE_SEP_STR * 2
-        ls3: str = LINE_SEP_STR * 3
+        ls: str = "\n"
+        ls2: str = "\n" * 2
+        ls3: str = "\n" * 3
 
         output = (
             ""
@@ -1169,7 +1166,7 @@ class DCM:
         curves_path: PathOrReadable = "Curve.xlsx",
         parameters_path: PathOrReadable = "Parameter.xlsx",
         parameter_blocks_path: PathOrReadable = "ParameterBlock.xlsx",
-    ) -> Self:
+    ) -> "Self":
         """Loads maps, curves, parameters and parameter blocks from excel files
 
         Args:
@@ -1185,7 +1182,7 @@ class DCM:
             .load_parameter_blocks(parameter_blocks_path)
         )
 
-    def load_maps(self, excel_path: PathOrReadable) -> Self:
+    def load_maps(self, excel_path: PathOrReadable) -> "Self":
         with _open_stream(excel_path) as excel_file:
             if isinstance(excel_file, Exception):
                 return self
@@ -1201,7 +1198,7 @@ class DCM:
                     self.maps[char_map.name] = char_map
         return self
 
-    def load_lines(self, excel_path: PathOrReadable) -> Self:
+    def load_lines(self, excel_path: PathOrReadable) -> "Self":
         with _open_stream(excel_path) as excel_file:
             if isinstance(excel_file, Exception):
                 return self
@@ -1217,7 +1214,7 @@ class DCM:
                     self.curves[char_line.name] = char_line
         return self
 
-    def load_parameter_blocks(self, excel_path: PathOrReadable) -> Self:
+    def load_parameter_blocks(self, excel_path: PathOrReadable) -> "Self":
         with _open_stream(excel_path) as excel_file:
             if isinstance(excel_file, Exception):
                 return self
@@ -1233,7 +1230,7 @@ class DCM:
                     self.parameter_blocks[block.name] = block
         return self
 
-    def load_parameters(self, excel_path: PathOrReadable) -> Self:
+    def load_parameters(self, excel_path: PathOrReadable) -> "Self":
         with _open_stream(excel_path) as excel_file:
             if isinstance(excel_file, Exception):
                 return self
@@ -1267,7 +1264,7 @@ class DCM:
             with open(path_or_file, "wb") as f:
                 f.write(content.encode(file_encoding))
 
-    def read(self, path_or_file: PathOrReadable) -> Self:
+    def read(self, path_or_file: PathOrReadable) -> "Self":
         line: bytes
         dcm_format: Match[bytes] | None = None
         is_file_header_finished: bool = False
@@ -1282,11 +1279,11 @@ class DCM:
                     continue
 
                 # Check if line is comment
-                elif line.startswith(COMMENT_QUALIFIERS):
+                elif line.startswith((b"*", b"!", b".")):
                     if not is_file_header_finished:
-                        self.file_header.extend(line[1:] + LINE_SEP_BYTES)
+                        self.file_header.extend(line[1:] + b"\n")
                     else:
-                        self.other_comments.extend(line[1:] + LINE_SEP_BYTES)
+                        self.other_comments.extend(line[1:] + b"\n")
                     continue
                 else:
                     # At this point first comment block passed
@@ -1512,22 +1509,23 @@ def _parse_variants(line: bytes) -> tuple[str, str]:
     if variant is None:
         raise ValueError(f"Invalid variant: {line}")
     return (
-        variant.group(1).strip().decode(errors=DECODE_ERRORS),
-        variant.group(2).strip().decode(errors=DECODE_ERRORS),
+        variant.group(1).strip().decode(errors="replace"),
+        variant.group(2).strip().decode(errors="replace"),
     )
 
 
-def _parse_text(line: bytes) -> str:
-    match = TEXT_PATTERN.search(line)
-    if match:
-        return match.group(1).decode(errors=DECODE_ERRORS)
-    else:
+def _parse_text(
+    line: bytes, text_pattern: Pattern[bytes] = TEXT_PATTERN
+) -> str:
+    match: Optional[Match[bytes]] = text_pattern.search(line)
+    if match is None:
         return ""
+    return match.group(1).decode(errors="replace")
 
 
 def _parse_name_without_keyword(line: bytes) -> str:
-    return line.strip().split(maxsplit=1)[1].decode(errors=DECODE_ERRORS)
+    return line.strip().split(maxsplit=1)[1].decode(errors="replace")
 
 
-def _parse_values_without_keyword(line: bytes) -> list[float]:
-    return [float(value) for value in line.strip().split()[1:]]
+def _parse_values_without_keyword(line: bytes) -> Iterable[float]:
+    return (float(value) for value in line.strip().split()[1:])
