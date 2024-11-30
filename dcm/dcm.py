@@ -68,7 +68,9 @@ PATTERN_2D: Final[bytes] = rb"\s+(.*?)\s+(\d+)\s+(\d+)"
 # Patterns: properties
 VERSION_PATTERN: Final[Pattern[bytes]] = compile(rb"(\d\.\d)")
 PURE_INT_PATTERN: Final[Pattern[str]] = compile(r"[-+]?\d+")
-PURE_FLOAT_PATTERN: Final[Pattern[str]] = compile(r"[-+]?(?:\d+\.\d*|\.\d+)")
+PURE_FLOAT_PATTERN: Final[Pattern[str]] = compile(
+    r"[-+]?(?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?"
+)
 TEXT_PATTERN: Final[Pattern[bytes]] = compile(rb'"(.*?)"')
 VARIANT_PATTERN: Final[Pattern[bytes]] = compile(rb"VAR\s+(.*?)=(.*)")
 AXIS_X_PATTERN: Final[Pattern[bytes]] = compile(rb"SSTX\s+(.*)")
@@ -219,17 +221,12 @@ class Parameter(BasicInformation):
     def value_or_text(self) -> str | float:
         return self.value if not isnan(self.value) else self.text
 
-    def as_number(
-        self,
-        raise_on_nan: bool = True,
-        int_pattern: Pattern[str] = PURE_INT_PATTERN,
-        float_pattern: Pattern[str] = PURE_FLOAT_PATTERN,
-    ) -> int | float | bool:
+    def as_number(self, raise_on_nan: bool = True) -> int | float | bool:
         if isnan(self.value):
             text: str = self.text
-            if int_pattern.fullmatch(text):
+            if PURE_INT_PATTERN.fullmatch(text):
                 return int(text)
-            elif float_pattern.fullmatch(text):
+            elif PURE_FLOAT_PATTERN.fullmatch(text):
                 return float(text)
             elif text == "true":
                 return True
@@ -1415,48 +1412,46 @@ class DCM:
         )
 
 
+@dataclass
 class SystemConstants:
-    __constants__: dict[str, int | float | bool]
-
-    def __init__(self) -> None:
-        self.__constants__ = {}
+    __constants__: dict[str, int | float | bool] = field(
+        default_factory=dict
+    )
 
     def __getattr__(self, name: str) -> int | float | bool:
-        value: int | float | bool | None = self.__constants__.get(name)
+        value: Optional[int | float | bool] = self.__constants__.get(name)
         if value is not None:
             return value
         warnings.warn(
-            f"{name}라는 SYSTEM_CONSTANT가 없습니다. 대신 0을 반환합니다."
+            f"No System Constant found with name: {name}. Returning 0."
         )
         return 0
 
-    def from_a2l(self, a2l_filepath: str) -> int:
+    def from_a2l(self, a2l_filepath: FileDescriptorOrPath) -> int:
         total_constants: int = 0
-        pattern = compile(r'SYSTEM_CONSTANT\s+"(\w+)"\s+"([^"]+)"')
-        with open(a2l_filepath, "r") as f:
+        pattern: Pattern[bytes] = compile(
+            rb'SYSTEM_CONSTANT\s+"(\w+)"\s+"([^"]+)"'
+        )
+        with open(a2l_filepath, "rb") as f:
             for line in f:
-                match = pattern.search(line.strip())
-                if match:
-                    value: float | int | str | bool
-                    key, value = match.groups()
-                    value = str(value).strip('"')
-                    if "." in value:
-                        try:
-                            value = float(value)
-                        except ValueError:
-                            pass
-                    else:
-                        try:
-                            value = int(value)
-                        except ValueError:
-                            lower_value = value.lower()
-                            if lower_value == "true":
-                                value = True
-                            elif lower_value == "false":
-                                value = False
-                    if isinstance(value, (int, float, bool)):
-                        self.__constants__[key] = value
-                        total_constants += 1
+                match: Optional[Match[bytes]] = pattern.search(line.strip())
+                if match is None:
+                    continue
+                bname, bvalue = match.groups()
+                name: str = bname.decode(errors="replace")
+                value: str = bvalue.decode(errors="replace")
+                if PURE_INT_PATTERN.fullmatch(value):
+                    self.__constants__[name] = int(value)
+                elif PURE_FLOAT_PATTERN.fullmatch(value):
+                    self.__constants__[name] = float(value)
+                elif value == "true":
+                    self.__constants__[name] = True
+                elif value == "false":
+                    self.__constants__[name] = False
+                else:
+                    warnings.warn(f"Invalid SYSTEM_CONSTANT {name}: {value}")
+                    continue
+                total_constants += 1
         return total_constants
 
 
@@ -1529,3 +1524,6 @@ def _parse_name_without_keyword(line: bytes) -> str:
 
 def _parse_values_without_keyword(line: bytes) -> Iterable[float]:
     return (float(value) for value in line.strip().split()[1:])
+
+
+SC = SystemConstants()
