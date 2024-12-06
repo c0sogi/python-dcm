@@ -591,7 +591,13 @@ class CharacteristicLine(BasicInformation):
         else:
             raise ValueError("DataFrame must have exactly one row or column")
 
-        series = pd.Series(df.values.flatten(), index=index, name=name)
+        values = df.values.flatten()
+        if index and isnan(index[0]):
+            index_name = ""
+            index = index[1:]
+            values = values[1:]
+
+        series = pd.Series(values, index=index, name=name)
         series.index.name = index_name
         return cls(
             name=name,
@@ -1174,7 +1180,7 @@ class DCM:
         """
         return (
             self.load_maps(maps_path)
-            .load_lines(curves_path)
+            .load_curves(curves_path)
             .load_parameters(parameters_path)
             .load_parameter_blocks(parameter_blocks_path)
         )
@@ -1195,7 +1201,7 @@ class DCM:
                     self.maps[char_map.name] = char_map
         return self
 
-    def load_lines(self, excel_path: PathOrReadable) -> "Self":
+    def load_curves(self, excel_path: PathOrReadable) -> "Self":
         with _open_stream(excel_path) as excel_file:
             if isinstance(excel_file, Exception):
                 return self
@@ -1210,6 +1216,10 @@ class DCM:
                     )
                     self.curves[char_line.name] = char_line
         return self
+
+    @property
+    def load_lines(self) -> Callable[[PathOrReadable], "Self"]:
+        return self.load_curves
 
     def load_parameter_blocks(self, excel_path: PathOrReadable) -> "Self":
         with _open_stream(excel_path) as excel_file:
