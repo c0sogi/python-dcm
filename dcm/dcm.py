@@ -13,7 +13,7 @@ from io import (
     TextIOWrapper,
 )
 from math import isnan, nan
-from re import I, Match, Pattern, compile
+from re import Match, Pattern, compile
 from typing import (
     TYPE_CHECKING,
     Callable,
