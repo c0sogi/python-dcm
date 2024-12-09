@@ -563,12 +563,8 @@ class CharacteristicLine(BasicInformation):
         if self.x_mapping:
             s += f"*SSTX {self.x_mapping}\n"
 
-        index: list[float] = self.index
-        if index:
-            s += f"   ST/X {' '.join(str(x) for x in index)}\n"
-        values = self.series.values
-        if values:
-            s += f"   WERT {' '.join(str(x) for x in values)}\n"
+        s += f"   ST/X {' '.join(str(x) for x in self.series.index)}\n"
+        s += f"   WERT {' '.join(str(x) for x in self.series.values)}\n"
         for name, var in self.variants.items():
             s += f"   VAR {name}={var}" + "\n"
         return s + "END"
@@ -591,13 +587,7 @@ class CharacteristicLine(BasicInformation):
         else:
             raise ValueError("DataFrame must have exactly one row or column")
 
-        values = df.values.flatten()
-        if index and isnan(index[0]):
-            index_name = ""
-            index = index[1:]
-            values = values[1:]
-
-        series = pd.Series(values, index=index, name=name)
+        series = pd.Series(df.values.flatten(), index=index, name=name)
         series.index.name = index_name
         return cls(
             name=name,
@@ -1180,7 +1170,7 @@ class DCM:
         """
         return (
             self.load_maps(maps_path)
-            .load_curves(curves_path)
+            .load_lines(curves_path)
             .load_parameters(parameters_path)
             .load_parameter_blocks(parameter_blocks_path)
         )
@@ -1219,6 +1209,7 @@ class DCM:
 
     @property
     def load_lines(self) -> Callable[[PathOrReadable], "Self"]:
+        # Alias for load_curves
         return self.load_curves
 
     def load_parameter_blocks(self, excel_path: PathOrReadable) -> "Self":
