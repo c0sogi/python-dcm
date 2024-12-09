@@ -3,7 +3,7 @@ import itertools
 import logging
 import os
 import warnings
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from io import (
     BufferedReader,
@@ -13,12 +13,13 @@ from io import (
     TextIOWrapper,
 )
 from math import isnan, nan
-from re import Match, Pattern, compile
+from re import I, Match, Pattern, compile
 from typing import (
     TYPE_CHECKING,
     Callable,
     Final,
     Iterable,
+    Iterator,
     Optional,
     TypeAlias,
     TypeVar,
@@ -524,7 +525,7 @@ class Function:
                 line
             )
             if function_match is None:
-                raise ValueError(f"Invalid function: {line}")
+                continue
             functions.append(
                 cls(
                     name=function_match.group(1).decode(errors="replace"),
@@ -1177,7 +1178,7 @@ class DCM:
 
     def load_maps(self, excel_path: PathOrReadable) -> "Self":
         with _open_stream(excel_path) as excel_file:
-            if isinstance(excel_file, Exception):
+            if excel_file is None:
                 return self
             excel = pd.ExcelFile(excel_file)
             for sheet in excel.sheet_names:
@@ -1193,7 +1194,7 @@ class DCM:
 
     def load_curves(self, excel_path: PathOrReadable) -> "Self":
         with _open_stream(excel_path) as excel_file:
-            if isinstance(excel_file, Exception):
+            if excel_file is None:
                 return self
             excel = pd.ExcelFile(excel_file)
             for sheet in excel.sheet_names:
@@ -1214,7 +1215,7 @@ class DCM:
 
     def load_parameter_blocks(self, excel_path: PathOrReadable) -> "Self":
         with _open_stream(excel_path) as excel_file:
-            if isinstance(excel_file, Exception):
+            if excel_file is None:
                 return self
             excel = pd.ExcelFile(excel_file)
             for sheet in excel.sheet_names:
@@ -1230,7 +1231,7 @@ class DCM:
 
     def load_parameters(self, excel_path: PathOrReadable) -> "Self":
         with _open_stream(excel_path) as excel_file:
-            if isinstance(excel_file, Exception):
+            if excel_file is None:
                 return self
             df: pd.DataFrame = pd.read_excel(excel_file)
             for _, row in df.iterrows():
@@ -1268,8 +1269,8 @@ class DCM:
         is_file_header_finished: bool = False
 
         with _open_stream(path_or_file) as stream:
-            if isinstance(stream, Exception):
-                return self
+            if stream is None:
+                raise FileNotFoundError(f"File not found: {path_or_file}")
             for line in stream:
                 # Check if empty line
                 line = line.strip()
@@ -1483,18 +1484,20 @@ def apply_curve(series: pd.Series) -> CurveFunction:
 
 
 @contextmanager
-def _open_stream(path_or_file: PathOrReadable):
+def _open_stream(
+    path_or_file: PathOrReadable,
+) -> Iterator[Optional[BytesReadable]]:
     stream: Optional[BytesReadable] = None
     try:
-        if isinstance(path_or_file, BytesReadable):
-            stream = path_or_file
-        elif isinstance(path_or_file, StringReadable):
-            stream = BytesIO(path_or_file.read().encode("utf-8"))
-        else:
-            stream = open(path_or_file, "rb")
+        with suppress(BaseException):
+
+            if isinstance(path_or_file, BytesReadable):
+                stream = path_or_file
+            elif isinstance(path_or_file, StringReadable):
+                stream = BytesIO(path_or_file.read().encode("utf-8"))
+            else:
+                stream = open(path_or_file, "rb")
         yield stream
-    except Exception as e:
-        yield e
     finally:
         if stream is not None:
             stream.close()
