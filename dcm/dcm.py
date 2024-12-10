@@ -151,7 +151,7 @@ class BasicInformation:
         if line.startswith(b"LANGNAME"):
             self.description = _parse_text(line)
         elif line.startswith(b"FUNKTION"):
-            self.function = _parse_text(line)
+            self.function = _parse_name_without_keyword(line)
         elif line.startswith((b"*", b"!", b".")):
             if comment:
                 self.comment += (
