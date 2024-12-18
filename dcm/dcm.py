@@ -299,7 +299,7 @@ class ParameterBlock(BasicInformation):
         s += self.unparse()
         s += f'   EINHEIT_W "{self.unit}"\n'
 
-        stringifier: Callable[[np.dtype], str]
+        stringifier: Callable[[object], str]
         if np.issubdtype(self.array.dtype, np.number):
             classifier: str = "WERT"
             stringifier = str
@@ -691,7 +691,7 @@ class CharacteristicLine(BasicInformation):
             fig = plt.gcf()
 
         index: list[float] = self.index
-        values: list[float] = self.series.values.tolist()
+        values: list[float] = np.asarray(self.series).ravel().tolist()
         ax.plot(index, values, **kwargs)
         ax.set_xlabel(f"{self.x_mapping} [{self.unit_x}]")
         ax.set_ylabel(f"{self.name} [{self.unit_values}]")
@@ -1467,7 +1467,7 @@ def apply_map(df: pd.DataFrame) -> MapFunction:
             V=df.to_numpy(dtype=FloatDtype),
             x=np.asarray(x, dtype=FloatDtype),
             y=np.asarray(y, dtype=FloatDtype),
-        )
+        ).astype(FloatDtype)
 
     return wrapper
 
@@ -1478,7 +1478,7 @@ def apply_curve(series: pd.Series) -> CurveFunction:
             X=series.index.to_numpy(dtype=FloatDtype),
             V=series.to_numpy(dtype=FloatDtype),
             x=np.asarray(x, dtype=FloatDtype),
-        )
+        ).astype(FloatDtype)
 
     return wrapper
 
