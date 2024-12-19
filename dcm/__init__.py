@@ -10,12 +10,12 @@ from .dcm import (
     GroupCharacteristicMap,
     Parameter,
     ParameterBlock,
-    SystemConstants,
     Textstring,
     apply_curve,
     apply_map,
 )
 from .linear_interpolation import lininterp1, lininterp2
+from .system_constants import SC, SystemConstants
 
 __all__ = [
     "DCM",
@@ -35,4 +35,6 @@ __all__ = [
     "apply_map",
     "lininterp1",
     "lininterp2",
+    "SC",
+    "SystemConstants",
 ]

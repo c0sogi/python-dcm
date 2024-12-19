@@ -1,32 +1,21 @@
 import copy
 import itertools
 import logging
-import os
-import warnings
+import re
+import sys
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from io import (
-    BufferedReader,
-    BufferedWriter,
     BytesIO,
-    StringIO,
-    TextIOWrapper,
 )
 from math import isnan, nan
-from re import Match, Pattern, compile
 from typing import (
-    TYPE_CHECKING,
     Callable,
     Final,
     Iterable,
     Iterator,
     Optional,
-    TypeAlias,
-    TypeVar,
 )
-
-if TYPE_CHECKING:
-    from typing import LiteralString, Self  # python >= 3.11
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -34,79 +23,75 @@ import numpy.typing as npt
 import pandas as pd
 
 from .linear_interpolation import lininterp1, lininterp2
-
-FloatDtype: TypeAlias = np.float64
-
-FileDescriptorOrPath: TypeAlias = (
-    int | str | bytes | os.PathLike[str] | os.PathLike[bytes]
+from .typing import (
+    BytesReadable,
+    BytesWritable,
+    CurveFunction,
+    FileDescriptorOrPath,
+    FloatDtype,
+    K,
+    MapFunction,
+    PathOrReadable,
+    StringReadable,
+    StringWritable,
+    V,
+    Writable,
 )
 
-BytesReadable: TypeAlias = BytesIO | BufferedReader
-BytesWritable: TypeAlias = BytesIO | BufferedWriter
-StringReadable: TypeAlias = StringIO | TextIOWrapper
-StringWritable: TypeAlias = StringIO | TextIOWrapper
-
-Readable: TypeAlias = BytesReadable | StringReadable
-Writable: TypeAlias = BytesWritable | StringWritable
-
-PathOrReadable: TypeAlias = FileDescriptorOrPath | Readable
-
-K = TypeVar("K")
-V = TypeVar("V")
-
-MapFunction: TypeAlias = Callable[
-    [npt.ArrayLike, npt.ArrayLike], npt.NDArray[FloatDtype]
-]
-CurveFunction: TypeAlias = Callable[[npt.ArrayLike], npt.NDArray[FloatDtype]]
+if sys.version_info >= (3, 11):
+    from typing import LiteralString, Self  # python >= 3.11
+else:
+    LiteralString = str
+    Self = "DCM"
 
 logger: Final[logging.Logger] = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# Patterns: dimensions
+# re.Patterns: dimensions
 PATTERN_1D: Final[bytes] = rb"\s+(.*?)\s+(\d+)"
 PATTERN_2D: Final[bytes] = rb"\s+(.*?)\s+(\d+)\s+(\d+)"
 
-# Patterns: properties
-VERSION_PATTERN: Final[Pattern[bytes]] = compile(rb"(\d\.\d)")
-PURE_INT_PATTERN: Final[Pattern[str]] = compile(r"[-+]?\d+")
-PURE_FLOAT_PATTERN: Final[Pattern[str]] = compile(
+# re.Patterns: properties
+VERSION_PATTERN: Final[re.Pattern[bytes]] = re.compile(rb"(\d\.\d)")
+PURE_INT_PATTERN: Final[re.Pattern[str]] = re.compile(r"[-+]?\d+")
+PURE_FLOAT_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"[-+]?(?:\d+\.\d*|\.\d+)(?:[eE][-+]?\d+)?"
 )
-TEXT_PATTERN: Final[Pattern[bytes]] = compile(rb'"(.*?)"')
-VARIANT_PATTERN: Final[Pattern[bytes]] = compile(rb"VAR\s+(.*?)=(.*)")
-AXIS_X_PATTERN: Final[Pattern[bytes]] = compile(rb"SSTX\s+(.*)")
-AXIS_Y_PATTERN: Final[Pattern[bytes]] = compile(rb"SSTY\s+(.*)")
+TEXT_PATTERN: Final[re.Pattern[bytes]] = re.compile(rb'"(.*?)"')
+VARIANT_PATTERN: Final[re.Pattern[bytes]] = re.compile(rb"VAR\s+(.*?)=(.*)")
+AXIS_X_PATTERN: Final[re.Pattern[bytes]] = re.compile(rb"SSTX\s+(.*)")
+AXIS_Y_PATTERN: Final[re.Pattern[bytes]] = re.compile(rb"SSTY\s+(.*)")
 
 EMPTY_SERIES: Final[pd.Series] = pd.Series()
 EMPTY_DATAFRAME: Final[pd.DataFrame] = pd.DataFrame()
 EMPTY_ARRAY: Final[np.ndarray] = np.array(())
 
-# Patterns: classes
-PARAMETER_BLOCK_PATTERN: Final[Pattern[bytes]] = compile(
+# re.Patterns: classes
+PARAMETER_BLOCK_PATTERN: Final[re.Pattern[bytes]] = re.compile(
     b"FESTWERTEBLOCK" + rb"\s+(.*?)\s+(\d+)(?:\s+\@\s+(\d+))?"
 )
-DISTRIBUTION_PATTERN: Final[Pattern[bytes]] = compile(
+DISTRIBUTION_PATTERN: Final[re.Pattern[bytes]] = re.compile(
     b"STUETZSTELLENVERTEILUNG" + PATTERN_1D
 )
-CHARACTERISTIC_LINE_PATTERN: Final[Pattern[bytes]] = compile(
+CHARACTERISTIC_LINE_PATTERN: Final[re.Pattern[bytes]] = re.compile(
     b"KENNLINIE" + PATTERN_1D
 )
-CHARACTERISTIC_MAP_PATTERN: Final[Pattern[bytes]] = compile(
+CHARACTERISTIC_MAP_PATTERN: Final[re.Pattern[bytes]] = re.compile(
     b"KENNFELD" + PATTERN_2D
 )
-FIXED_CHARACTERISTIC_LINE_PATTERN: Final[Pattern[bytes]] = compile(
+FIXED_CHARACTERISTIC_LINE_PATTERN: Final[re.Pattern[bytes]] = re.compile(
     b"FESTKENNLINIE" + PATTERN_1D
 )
-FIXED_CHARACTERISTIC_MAP_PATTERN: Final[Pattern[bytes]] = compile(
+FIXED_CHARACTERISTIC_MAP_PATTERN: Final[re.Pattern[bytes]] = re.compile(
     b"FESTKENNFELD" + PATTERN_2D
 )
-GROUP_CHARACTERISTIC_LINE_PATTERN: Final[Pattern[bytes]] = compile(
+GROUP_CHARACTERISTIC_LINE_PATTERN: Final[re.Pattern[bytes]] = re.compile(
     b"GRUPPENKENNLINIE" + PATTERN_1D
 )
-GROUP_CHARACTERISTIC_MAP_PATTERN: Final[Pattern[bytes]] = compile(
+GROUP_CHARACTERISTIC_MAP_PATTERN: Final[re.Pattern[bytes]] = re.compile(
     b"GRUPPENKENNFELD" + PATTERN_2D
 )
-FUNCTION_PATTERN: Final[Pattern[bytes]] = compile(
+FUNCTION_PATTERN: Final[re.Pattern[bytes]] = re.compile(
     rb"FKT\s+(.*?)(?: \"(.*?)?\"(?: \"(.*?)?\")?)?$"
 )
 
@@ -193,7 +178,7 @@ class Parameter(BasicInformation):
         )
 
     @classmethod
-    def from_bytestream(cls, stream: BytesReadable, line: bytes) -> "Self":
+    def from_bytestream(cls, stream: BytesReadable, line: bytes) -> Self:
         self = cls(
             name=_parse_name_without_keyword(line),
             description="",
@@ -353,8 +338,8 @@ class ParameterBlock(BasicInformation):
         )
 
     @classmethod
-    def from_bytestream(cls, stream: BytesReadable, line: bytes) -> "Self":
-        m: Optional[Match[bytes]] = PARAMETER_BLOCK_PATTERN.search(
+    def from_bytestream(cls, stream: BytesReadable, line: bytes) -> Self:
+        m: Optional[re.Match[bytes]] = PARAMETER_BLOCK_PATTERN.search(
             line.strip()
         )
         if m is None:
@@ -435,7 +420,7 @@ class Textstring(BasicInformation):
         return self.name == other.name and self.text == other.text
 
     @classmethod
-    def from_bytestream(cls, stream: BytesReadable, line: bytes) -> "Self":
+    def from_bytestream(cls, stream: BytesReadable, line: bytes) -> Self:
         self = cls(
             name=_parse_name_without_keyword(line),
             description="",
@@ -475,8 +460,8 @@ class Distribution(BasicInformation):
         return s + "END"
 
     @classmethod
-    def from_bytestream(cls, stream: BytesReadable, line: bytes) -> "Self":
-        m: Match[bytes] | None = DISTRIBUTION_PATTERN.search(line.strip())
+    def from_bytestream(cls, stream: BytesReadable, line: bytes) -> Self:
+        m: re.Match[bytes] | None = DISTRIBUTION_PATTERN.search(line.strip())
         if m is None:
             raise ValueError(f"Invalid distribution: {line}")
         name: str = m.group(1).decode(errors="replace")
@@ -518,10 +503,10 @@ class Function:
         return f'   FKT {self.name} "{self.description}" "{self.version}"'
 
     @classmethod
-    def from_bytestream(cls, stream: BytesReadable) -> list["Self"]:
-        functions: list["Self"] = []
+    def from_bytestream(cls, stream: BytesReadable) -> list[Self]:
+        functions: list[Self] = []
         while not (line := stream.readline().strip()).startswith(b"END"):
-            function_match: Match[bytes] | None = FUNCTION_PATTERN.search(
+            function_match: re.Match[bytes] | None = FUNCTION_PATTERN.search(
                 line
             )
             if function_match is None:
@@ -552,7 +537,7 @@ class CharacteristicLine(BasicInformation):
     series: "pd.Series[float]"
 
     @property
-    def classifier(self) -> "LiteralString":
+    def classifier(self) -> LiteralString:
         return "KENNLINIE"
 
     def __str__(self) -> str:
@@ -578,7 +563,7 @@ class CharacteristicLine(BasicInformation):
         )
 
     @classmethod
-    def from_dataframe(cls, df: pd.DataFrame, name: str) -> "Self":
+    def from_dataframe(cls, df: pd.DataFrame, name: str) -> Self:
         if df.shape[0] == 1:
             index: list[float] = df.columns.astype(FloatDtype).tolist()
             index_name: str = df.columns.name or df.index.name
@@ -604,9 +589,9 @@ class CharacteristicLine(BasicInformation):
 
     @classmethod
     def from_bytestream(
-        cls, stream: BytesReadable, line: bytes, pattern: Pattern[bytes]
-    ) -> "Self":
-        m: Match[bytes] | None = pattern.search(line)
+        cls, stream: BytesReadable, line: bytes, pattern: re.Pattern[bytes]
+    ) -> Self:
+        m: re.Match[bytes] | None = pattern.search(line)
         if m is None:
             raise ValueError(f"Invalid characteristic map: {line}")
 
@@ -640,7 +625,9 @@ class CharacteristicLine(BasicInformation):
             elif line.startswith(b"EINHEIT_X"):
                 self.unit_x = _parse_text(line)
             elif line.startswith((b"*", b"!", b".")):
-                re_match_x: Match[bytes] | None = AXIS_X_PATTERN.search(line)
+                re_match_x: re.Match[bytes] | None = AXIS_X_PATTERN.search(
+                    line
+                )
                 if re_match_x:
                     index_name = re_match_x.group(1).decode(errors="replace")
                 else:
@@ -714,14 +701,14 @@ class CharacteristicLine(BasicInformation):
 @dataclass
 class FixedCharacteristicLine(CharacteristicLine):
     @property
-    def classifier(self) -> "LiteralString":
+    def classifier(self) -> LiteralString:
         return "FESTKENNLINIE"
 
 
 @dataclass
 class GroupCharacteristicLine(CharacteristicLine):
     @property
-    def classifier(self) -> "LiteralString":
+    def classifier(self) -> LiteralString:
         return "GRUPPENKENNLINIE"
 
 
@@ -733,7 +720,7 @@ class CharacteristicMap(BasicInformation):
     unit_values: str
 
     @property
-    def classifier(self) -> "LiteralString":
+    def classifier(self) -> LiteralString:
         return "KENNFELD"
 
     def __eq__(self, other: object) -> bool:
@@ -770,7 +757,7 @@ class CharacteristicMap(BasicInformation):
         return s + "END"
 
     @classmethod
-    def from_dataframe(cls, df: pd.DataFrame, name: str) -> "Self":
+    def from_dataframe(cls, df: pd.DataFrame, name: str) -> Self:
         return cls(
             dataframe=df,
             name=name,
@@ -789,9 +776,9 @@ class CharacteristicMap(BasicInformation):
         cls,
         stream: BytesReadable,
         line: bytes,
-        pattern: Pattern[bytes],
-    ) -> "Self":
-        m: Match[bytes] | None = pattern.search(line)
+        pattern: re.Pattern[bytes],
+    ) -> Self:
+        m: re.Match[bytes] | None = pattern.search(line)
         if m is None:
             raise ValueError(f"Invalid characteristic map: {line}")
         name: str = m.group(1).decode(errors="replace")
@@ -833,11 +820,11 @@ class CharacteristicMap(BasicInformation):
             elif line.startswith(b"EINHEIT_Y"):
                 self.unit_y = _parse_text(line)
             elif line.startswith((b"*", b"!", b".")):
-                mx: Match[bytes] | None = AXIS_X_PATTERN.search(line)
+                mx: re.Match[bytes] | None = AXIS_X_PATTERN.search(line)
                 if mx:
                     column_name = mx.group(1).decode(errors="replace")
                 else:
-                    my: Match[bytes] | None = AXIS_Y_PATTERN.search(line)
+                    my: re.Match[bytes] | None = AXIS_Y_PATTERN.search(line)
                     if my:
                         index_name = my.group(1).decode(errors="replace")
                     else:
@@ -934,14 +921,14 @@ class CharacteristicMap(BasicInformation):
 @dataclass
 class FixedCharacteristicMap(CharacteristicMap):
     @property
-    def classifier(self) -> "LiteralString":
+    def classifier(self) -> LiteralString:
         return "FESTKENNFELD"
 
 
 @dataclass
 class GroupCharacteristicMap(CharacteristicMap):
     @property
-    def classifier(self) -> "LiteralString":
+    def classifier(self) -> LiteralString:
         return "GRUPPENKENNFELD"
 
 
@@ -961,7 +948,7 @@ class DCM:
     distributions: dict[str, Distribution] = field(default_factory=dict)
 
     @classmethod
-    def from_file(cls, path_or_file: PathOrReadable) -> "Self":
+    def from_file(cls, path_or_file: PathOrReadable) -> Self:
         return cls().read(path_or_file)
 
     def __str__(self) -> str:
@@ -1160,7 +1147,7 @@ class DCM:
         curves_path: PathOrReadable = "Curve.xlsx",
         parameters_path: PathOrReadable = "Parameter.xlsx",
         parameter_blocks_path: PathOrReadable = "ParameterBlock.xlsx",
-    ) -> "Self":
+    ) -> Self:
         """Loads maps, curves, parameters and parameter blocks from excel files
 
         Args:
@@ -1176,7 +1163,7 @@ class DCM:
             .load_parameter_blocks(parameter_blocks_path)
         )
 
-    def load_maps(self, excel_path: PathOrReadable) -> "Self":
+    def load_maps(self, excel_path: PathOrReadable) -> Self:
         with _open_stream(excel_path) as excel_file:
             if excel_file is None:
                 return self
@@ -1192,7 +1179,7 @@ class DCM:
                     self.maps[char_map.name] = char_map
         return self
 
-    def load_curves(self, excel_path: PathOrReadable) -> "Self":
+    def load_curves(self, excel_path: PathOrReadable) -> Self:
         with _open_stream(excel_path) as excel_file:
             if excel_file is None:
                 return self
@@ -1209,11 +1196,11 @@ class DCM:
         return self
 
     @property
-    def load_lines(self) -> Callable[[PathOrReadable], "Self"]:
+    def load_lines(self) -> Callable[[PathOrReadable], Self]:
         # Alias for load_curves
         return self.load_curves
 
-    def load_parameter_blocks(self, excel_path: PathOrReadable) -> "Self":
+    def load_parameter_blocks(self, excel_path: PathOrReadable) -> Self:
         with _open_stream(excel_path) as excel_file:
             if excel_file is None:
                 return self
@@ -1229,7 +1216,7 @@ class DCM:
                     self.parameter_blocks[block.name] = block
         return self
 
-    def load_parameters(self, excel_path: PathOrReadable) -> "Self":
+    def load_parameters(self, excel_path: PathOrReadable) -> Self:
         with _open_stream(excel_path) as excel_file:
             if excel_file is None:
                 return self
@@ -1263,9 +1250,9 @@ class DCM:
             with open(path_or_file, "wb") as f:
                 f.write(content.encode(file_encoding))
 
-    def read(self, path_or_file: PathOrReadable) -> "Self":
+    def read(self, path_or_file: PathOrReadable) -> Self:
         line: bytes
-        dcm_format: Match[bytes] | None = None
+        dcm_format: re.Match[bytes] | None = None
         is_file_header_finished: bool = False
 
         with _open_stream(path_or_file) as stream:
@@ -1414,49 +1401,6 @@ class DCM:
         )
 
 
-@dataclass
-class SystemConstants:
-    __constants__: dict[str, int | float | bool] = field(
-        default_factory=dict
-    )
-
-    def __getattr__(self, name: str) -> int | float | bool:
-        value: Optional[int | float | bool] = self.__constants__.get(name)
-        if value is not None:
-            return value
-        warnings.warn(
-            f"No System Constant found with name: {name}. Returning 0."
-        )
-        return 0
-
-    def from_a2l(self, a2l_filepath: FileDescriptorOrPath) -> int:
-        total_constants: int = 0
-        pattern: Pattern[bytes] = compile(
-            rb'SYSTEM_CONSTANT\s+"(\w+)"\s+"([^"]+)"'
-        )
-        with open(a2l_filepath, "rb") as f:
-            for line in f:
-                match: Optional[Match[bytes]] = pattern.search(line.strip())
-                if match is None:
-                    continue
-                bname, bvalue = match.groups()
-                name: str = bname.decode(errors="replace")
-                value: str = bvalue.decode(errors="replace")
-                if PURE_INT_PATTERN.fullmatch(value):
-                    self.__constants__[name] = int(value)
-                elif PURE_FLOAT_PATTERN.fullmatch(value):
-                    self.__constants__[name] = float(value)
-                elif value == "true":
-                    self.__constants__[name] = True
-                elif value == "false":
-                    self.__constants__[name] = False
-                else:
-                    warnings.warn(f"Invalid SYSTEM_CONSTANT {name}: {value}")
-                    continue
-                total_constants += 1
-        return total_constants
-
-
 def apply_map(df: pd.DataFrame) -> MapFunction:
     def wrapper(
         x: npt.ArrayLike, y: npt.ArrayLike
@@ -1504,7 +1448,7 @@ def _open_stream(
 
 
 def _parse_variants(line: bytes) -> tuple[str, str]:
-    variant: Optional[Match[bytes]] = VARIANT_PATTERN.search(line.strip())
+    variant: Optional[re.Match[bytes]] = VARIANT_PATTERN.search(line.strip())
     if variant is None:
         raise ValueError(f"Invalid variant: {line}")
     return (
@@ -1514,9 +1458,9 @@ def _parse_variants(line: bytes) -> tuple[str, str]:
 
 
 def _parse_text(
-    line: bytes, text_pattern: Pattern[bytes] = TEXT_PATTERN
+    line: bytes, text_pattern: re.Pattern[bytes] = TEXT_PATTERN
 ) -> str:
-    match: Optional[Match[bytes]] = text_pattern.search(line)
+    match: Optional[re.Match[bytes]] = text_pattern.search(line)
     if match is None:
         return ""
     return match.group(1).decode(errors="replace")
@@ -1528,6 +1472,3 @@ def _parse_name_without_keyword(line: bytes) -> str:
 
 def _parse_values_without_keyword(line: bytes) -> Iterable[float]:
     return (float(value) for value in line.strip().split()[1:])
-
-
-SC = SystemConstants()
