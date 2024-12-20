@@ -969,7 +969,10 @@ class DCM:
             + ls2
         )
         # Print the file version
-        output += f"KONSERVIERUNG_FORMAT {self.dcm_format or 2.0}" + ls2
+        output += (
+            f"KONSERVIERUNG_FORMAT {self.dcm_format.decode(errors="replace") or 2.0}"
+            + ls2
+        )
 
         # Print the other comments
         output += (
